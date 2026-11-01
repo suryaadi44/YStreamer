@@ -74,7 +74,7 @@ impl HwEncoder {
 static DECODER: OnceLock<Decoder> = OnceLock::new();
 static ENCODER: OnceLock<Option<HwEncoder>> = OnceLock::new();
 
-/// The decoder HDMI uses, decided once
+/// The decoder HDMI, NDI and OMT share, decided once
 pub fn decoder() -> Decoder {
     *DECODER.get_or_init(|| {
         let d = choose_decoder(Board::detect(), available);
