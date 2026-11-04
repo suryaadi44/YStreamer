@@ -3,9 +3,8 @@
 # Each package and its .sig (from sign.sh) must then be served at <base-url>/
 # The notes are the version's section of CHANGELOG.md
 #
-# A package built for another Debian release says so in its revision
-# (1~bookworm, see bookworm/build.sh) and is listed as <arch>-<release>, the
-# ROCK 3A's as arm64-bookworm; the rest are listed as <arch>
+# One package per architecture: the Pi and the ROCK 3A both run Debian 13
+# and share the arm64 one
 set -e
 [ $# -ge 2 ] || {
     echo "usage: manifest.sh <file.deb>... <base-url>" >&2
@@ -32,15 +31,11 @@ packages = {}
 versions = set()
 for line in open(listing):
     full, arch, url, signature = line.rstrip("\n").split("\t")
-    version, _, revision = full.partition("-")
+    version = full.partition("-")[0]
     versions.add(version)
-    key = arch
-    release = re.search(r"~([a-z]+)", revision)
-    if release:
-        key = f"{arch}-{release.group(1)}"
-    if key in packages:
-        sys.exit(f"Two packages for {key}")
-    packages[key] = {"url": url, "signature": signature}
+    if arch in packages:
+        sys.exit(f"Two packages for {arch}")
+    packages[arch] = {"url": url, "signature": signature}
 if len(versions) != 1:
     sys.exit(f"The packages aren't all the same version: {sorted(versions)}")
 version = versions.pop()

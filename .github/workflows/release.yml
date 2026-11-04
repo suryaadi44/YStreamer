@@ -103,66 +103,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  package-bookworm:
-    name: Package for Debian 12 (Radxa ROCK 3A)
-    needs: package
-    runs-on: ubuntu-24.04-arm
-    # Radxa's ROCK 3A image is bookworm, whose glibc and GStreamer are older
-    # than trixie's; the package above doesn't install there
-    container: debian:bookworm
-    steps:
-      - name: Install build tools
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git xz-utils build-essential dpkg-dev \
-            pkg-config openssl python3 \
-            libglib2.0-dev libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev libgstrtspserver-1.0-dev
-
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.TAG }}
-
-      - uses: jdx/mise-action@v5
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: device/backend
-          cache-bin: true
-          key: bookworm
-      - name: Install cargo-deb
-        run: command -v cargo-deb || cargo install cargo-deb --locked
-
-      - name: Build the package
-        run: |
-          mise run frontend:install
-          mise run frontend:build
-          (cd device/backend && cargo deb --deb-revision '1~bookworm')
-          deb=$(ls device/backend/target/debian/*.deb)
-          [ "$(echo "$deb" | wc -l)" = 1 ] || { echo "::error::Expected one .deb, found: $deb"; exit 1; }
-          case $deb in *'~bookworm'*) ;; *) echo "::error::$deb isn't marked as the bookworm build"; exit 1 ;; esac
-          echo "DEB=$deb" >>"$GITHUB_ENV"
-
-      - name: Sign the package
-        env:
-          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-        run: |
-          [ -n "$UPDATE_SIGNING_KEY" ] || { echo "::error::The UPDATE_SIGNING_KEY secret isn't set."; exit 1; }
-          key="$RUNNER_TEMP/update-key.pem"
-          trap 'rm -f "$key"' EXIT
-          umask 077
-          printf '%s\n' "$UPDATE_SIGNING_KEY" >"$key"
-          YSTREAMER_SIGNING_KEY="$key" device/packaging/sign.sh "$DEB"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: package-bookworm
-          path: |
-            device/backend/target/debian/*.deb
-            device/backend/target/debian/*.deb.sig
-          if-no-files-found: error
-          retention-days: 7
-
   image:
     name: SD card image
     needs: package
@@ -211,7 +151,7 @@ jobs:
 
   release:
     name: Draft the release
-    needs: [package, package-bookworm, image]
+    needs: [package, image]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -225,8 +165,7 @@ jobs:
           path: assets
           merge-multiple: true
 
-      # Both packages under one version: arm64 for the Pi, arm64-bookworm for
-      # the ROCK 3A
+      # One arm64 package, for the Pi and the ROCK 3A alike
       - name: Write the manifest
         run: |
           device/packaging/manifest.sh assets/*.deb \
@@ -235,7 +174,7 @@ jobs:
           import json, sys
           manifest = json.load(open(sys.argv[1]))
           assert manifest["version"] == sys.argv[2], f"manifest says {manifest['version']}"
-          for key in ("arm64", "arm64-bookworm"):
+          for key in ("arm64",):
               assert key in manifest["packages"], f"no {key} package"
           print(json.dumps(manifest, indent=2))
           PY
