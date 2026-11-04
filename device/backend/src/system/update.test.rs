@@ -215,7 +215,8 @@ fn install_script_takes_only_the_video_packages_from_radxa() {
 #[test]
 fn install_script_hands_the_wired_port_over_at_the_next_boot() {
     let script = include_str!("../../../packaging/install.sh");
-    assert!(script.contains("NETPLAN_ARMBIAN=/etc/netplan/10-dhcp-all-interfaces.yaml\n"));
+    assert!(script.contains("NETPLAN_DIR=/etc/netplan\n"));
+    assert!(script.contains("NETPLAN_ARMBIAN=$NETPLAN_DIR/10-dhcp-all-interfaces.yaml\n"));
     assert!(
         script.contains("HANDOVER_CONF=/run/NetworkManager/conf.d/90-ystreamer-handover.conf\n")
     );
@@ -228,11 +229,82 @@ fn install_script_hands_the_wired_port_over_at_the_next_boot() {
     assert!(!script.contains("netplan apply"));
     assert!(!script.contains("disable --now systemd-networkd"));
     assert!(!script.lines().any(|l| l.trim_start().starts_with("reboot")));
-    let handover = script.find("\n    hand_over_network\n").expect("called");
+    // NetworkManager is kept off before the package pulls it in; networkd is
+    // only switched off once NetworkManager is there to take over, so a
+    // failed install followed by a reboot still has a network
+    let keep_off = script
+        .find("\n    keep_networkmanager_off_ethernet\n")
+        .expect("called");
     let package = script
         .find("apt-get install -y --allow-downgrades \"$DEB\"")
         .unwrap();
-    assert!(handover < package);
+    let handover = script.find("\n    hand_over_network\n").expect("called");
+    assert!(keep_off < package && package < handover);
+    assert!(
+        shell_function(script, "hand_over_network")
+            .contains("systemctl is-enabled --quiet NetworkManager")
+    );
+}
+
+/// The text of one of install.sh's functions, to run on its own
+fn shell_function(script: &str, name: &str) -> String {
+    let start = script
+        .find(&format!("\n{name}() {{\n"))
+        .unwrap_or_else(|| panic!("no {name}()"));
+    let end = start + script[start..].find("\n}\n").unwrap() + 3;
+    script[start..end].to_string()
+}
+
+/// Whether install.sh would hand a netplan folder like this one over
+fn would_hand_over(files: &[(&str, &str)]) -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "ystreamer-netplan-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    for (name, text) in files {
+        fs::write(dir.join(name), text).unwrap();
+    }
+    let script = include_str!("../../../packaging/install.sh");
+    let program = format!(
+        "NETPLAN_DIR={dir}\nNETPLAN_ARMBIAN=$NETPLAN_DIR/10-dhcp-all-interfaces.yaml\n{}{}needs_handover",
+        shell_function(script, "netplan_is_stock"),
+        shell_function(script, "needs_handover"),
+        dir = dir.display(),
+    );
+    let ok = std::process::Command::new("sh")
+        .args(["-c", &program])
+        .status()
+        .unwrap()
+        .success();
+    fs::remove_dir_all(&dir).unwrap();
+    ok
+}
+
+/// Only Armbian's own file, as it comes, is set aside: a static address or
+/// another netplan file means the user set the network up, and moving one
+/// file wouldn't hand the port over anyway
+#[test]
+fn install_script_hands_over_only_armbians_own_netplan() {
+    let stock = include_str!("../../../packaging/testdata/armbian-10-dhcp-all-interfaces.yaml");
+    const NAME: &str = "10-dhcp-all-interfaces.yaml";
+    assert!(would_hand_over(&[(NAME, stock)]));
+    assert!(!would_hand_over(&[]));
+    let fixed = stock.replacen(
+        "      dhcp4: yes\n",
+        "      dhcp4: no\n      addresses: [192.168.0.50/24]\n",
+        1,
+    );
+    assert!(!would_hand_over(&[(NAME, &fixed)]));
+    let no_dhcp = stock.replacen("dhcp4: yes", "dhcp4: false", 1);
+    assert!(!would_hand_over(&[(NAME, &no_dhcp)]));
+    let already = stock.replace("renderer: networkd", "renderer: NetworkManager");
+    assert!(!would_hand_over(&[(NAME, &already)]));
+    let other = "network:\n  version: 2\n  ethernets:\n    end1:\n      dhcp4: yes\n";
+    assert!(!would_hand_over(&[(NAME, stock), ("20-mine.yaml", other)]));
 }
 
 #[test]

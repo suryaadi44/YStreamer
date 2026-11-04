@@ -25,7 +25,8 @@ RADXA_PIN=/etc/apt/preferences.d/ystreamer-radxa
 RADXA_REPO=
 # Armbian's own netplan file, which gives the wired ports to systemd-networkd.
 # YStreamer's network settings work through NetworkManager
-NETPLAN_ARMBIAN=/etc/netplan/10-dhcp-all-interfaces.yaml
+NETPLAN_DIR=/etc/netplan
+NETPLAN_ARMBIAN=$NETPLAN_DIR/10-dhcp-all-interfaces.yaml
 # Keeps NetworkManager off the wired ports until the next boot; /run is
 # emptied at every boot
 HANDOVER_CONF=/run/NetworkManager/conf.d/90-ystreamer-handover.conf
@@ -179,25 +180,44 @@ Pin-Priority: 500
 EOF
 }
 
-needs_handover() {
-    [ -f "$NETPLAN_ARMBIAN" ]
+# Armbian's file as it comes: networkd, DHCP, no address or route of the
+# user's own
+netplan_is_stock() {
+    grep -qE '^[[:space:]]*renderer:[[:space:]]*networkd' "$1" &&
+        ! grep -qE '^[^#]*(addresses|gateway4|gateway6|routes|nameservers):|^[^#]*dhcp4:[[:space:]]*(no|false)' "$1"
 }
 
-# From the next boot NetworkManager runs the wired port, as on Raspberry Pi
-# OS: Armbian's netplan file is set aside and networkd switched off, and
-# NetworkManager makes its "Wired connection 1". Nothing changes before the
-# reboot: NetworkManager, which the package pulls in, is kept off the wired
-# ports until then, so the SSH session running this stays up
-hand_over_network() {
-    # Also after a run that stopped before NetworkManager was installed
-    if needs_handover || { [ -f "$NETPLAN_ARMBIAN.ystreamer-off" ] && ! command -v nmcli >/dev/null 2>&1; }; then
-        mkdir -p "${HANDOVER_CONF%/*}"
-        cat >"$HANDOVER_CONF" <<'EOF'
+# Only Armbian's own setup is handed over. A network set up by hand stays as
+# it is, and another netplan file would give the port to networkd again
+needs_handover() {
+    [ -f "$NETPLAN_ARMBIAN" ] && netplan_is_stock "$NETPLAN_ARMBIAN" || return 1
+    for f in "$NETPLAN_DIR"/*.yaml; do
+        [ "$f" = "$NETPLAN_ARMBIAN" ] || [ ! -e "$f" ] || return 1
+    done
+}
+
+# Before the package pulls NetworkManager in: it leaves the wired ports to
+# networkd until the next boot, so the SSH session running this stays up
+keep_networkmanager_off_ethernet() {
+    needs_handover || return 0
+    mkdir -p "${HANDOVER_CONF%/*}"
+    cat >"$HANDOVER_CONF" <<'EOF'
 [keyfile]
 unmanaged-devices=type:ethernet
 EOF
-    fi
+}
+
+# Once the package and NetworkManager are in: from the next boot
+# NetworkManager runs the wired port, as on Raspberry Pi OS. Armbian's
+# netplan file is set aside and networkd switched off, and NetworkManager
+# makes its "Wired connection 1". Done last, so an install that stops
+# halfway leaves networkd in charge after a reboot
+hand_over_network() {
     needs_handover || return 0
+    if ! systemctl is-enabled --quiet NetworkManager 2>/dev/null; then
+        warn "NetworkManager isn't enabled, so the wired network stays with systemd-networkd."
+        return 0
+    fi
     mv "$NETPLAN_ARMBIAN" "$NETPLAN_ARMBIAN.ystreamer-off"
     systemctl disable systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service >/dev/null 2>&1 || true
     HANDED_OVER=1
@@ -246,6 +266,8 @@ check_device() {
         fi
         if needs_handover; then
             say "The wired network is run by systemd-networkd (netplan, $NETPLAN_ARMBIAN); the install hands it to NetworkManager, from the next boot."
+        elif [ -f "$NETPLAN_ARMBIAN" ]; then
+            warn "The wired network is set up by hand in $NETPLAN_DIR, so it stays with systemd-networkd, as it is; YStreamer's Ethernet settings won't apply to it."
         fi
         # Host or device is a switch on the board, not a boot setting
         [ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] ||
@@ -446,9 +468,12 @@ if [ "$BOARD" = rockchip ]; then
         warn "Couldn't install $ROCKCHIP_PACKAGES; without them the video is decoded in software."
 fi
 if [ "$BOARD" = rockchip ]; then
-    hand_over_network
+    keep_networkmanager_off_ethernet
 fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "$DEB"
+if [ "$BOARD" = rockchip ]; then
+    hand_over_network
+fi
 
 # The updater goes back to current.deb if a later version doesn't start, and
 # System → Updates can roll back to previous.deb, as after an update from there

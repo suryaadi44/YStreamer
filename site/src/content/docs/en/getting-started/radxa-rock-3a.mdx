@@ -102,6 +102,11 @@ Updates from the web interface install the same package the Pi gets.
   video hardware is only open to root, and YStreamer runs as root.
 - **Can't find the board after the reboot**: it got a new address from your
   router. `<hostname>.local` finds it, as does the router's list of devices.
+- **"The wired network is set up by hand" during the install**: you changed
+  Armbian's netplan setup, a static address for instance, or added a netplan
+  file of your own. The install leaves it as it is, with systemd-networkd, so
+  the board stays where you put it; YStreamer works over it, but its Ethernet
+  settings don't apply.
 
 ## Undoing it all
 
