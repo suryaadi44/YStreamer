@@ -183,24 +183,140 @@ fn install_script_checks_against_the_same_key() {
     assert!(script.contains(&format!("PUBLIC_KEY=\"{}\"", PUBLIC_KEY.trim())));
 }
 
+/// On the ROCK 3A, install.sh adds Radxa's repository for the video
+/// packages; nothing else may come from it, or Radxa's kernel and system
+/// packages could replace Armbian's
 #[test]
-fn a_device_on_another_debian_release_takes_its_own_package() {
+fn install_script_takes_only_the_video_packages_from_radxa() {
+    let script = include_str!("../../../packaging/install.sh");
+    let packages = "librockchip-mpp1 librga2 gstreamer1.0-rockchip1";
+    assert!(script.contains(&format!("ROCKCHIP_PACKAGES=\"{packages}\"")));
+    assert!(script.contains(
+        "Package: *\nPin: origin radxa-repo.github.io\nPin-Priority: -1\n\n\
+         Package: $ROCKCHIP_PACKAGES\nPin: origin radxa-repo.github.io\nPin-Priority: 500\n"
+    ));
+    assert!(script.contains("RADXA_KEY=/etc/apt/keyrings/ystreamer-radxa.asc\n"));
+    assert!(script.contains("Signed-By: $RADXA_KEY\n"));
+    assert_eq!(
+        script
+            .matches("-----BEGIN PGP PUBLIC KEY BLOCK-----")
+            .count(),
+        1
+    );
+    assert_eq!(
+        script.matches("-----END PGP PUBLIC KEY BLOCK-----").count(),
+        1
+    );
+}
+
+/// Armbian's wired port moves from systemd-networkd to NetworkManager at the
+/// next boot. Until then NetworkManager, which the package pulls in, must
+/// keep off it, or the SSH session running the install could drop
+#[test]
+fn install_script_hands_the_wired_port_over_at_the_next_boot() {
+    let script = include_str!("../../../packaging/install.sh");
+    assert!(script.contains("NETPLAN_DIR=/etc/netplan\n"));
+    assert!(script.contains("NETPLAN_ARMBIAN=$NETPLAN_DIR/10-dhcp-all-interfaces.yaml\n"));
+    assert!(
+        script.contains("HANDOVER_CONF=/run/NetworkManager/conf.d/90-ystreamer-handover.conf\n")
+    );
+    assert!(script.contains("[keyfile]\nunmanaged-devices=type:ethernet\n"));
+    assert!(script.contains(
+        "systemctl disable systemd-networkd.service systemd-networkd.socket \
+         systemd-networkd-wait-online.service"
+    ));
+    // Nothing takes effect before the reboot, and the reboot is the user's
+    assert!(!script.contains("netplan apply"));
+    assert!(!script.contains("disable --now systemd-networkd"));
+    assert!(!script.lines().any(|l| l.trim_start().starts_with("reboot")));
+    // NetworkManager is kept off before the package pulls it in; networkd is
+    // only switched off once NetworkManager is there to take over, so a
+    // failed install followed by a reboot still has a network
+    let keep_off = script
+        .find("\n    keep_networkmanager_off_ethernet\n")
+        .expect("called");
+    let package = script
+        .find("apt-get install -y --allow-downgrades \"$DEB\"")
+        .unwrap();
+    let handover = script.find("\n    hand_over_network\n").expect("called");
+    assert!(keep_off < package && package < handover);
+    assert!(
+        shell_function(script, "hand_over_network")
+            .contains("systemctl is-enabled --quiet NetworkManager")
+    );
+}
+
+/// The text of one of install.sh's functions, to run on its own
+fn shell_function(script: &str, name: &str) -> String {
+    let start = script
+        .find(&format!("\n{name}() {{\n"))
+        .unwrap_or_else(|| panic!("no {name}()"));
+    let end = start + script[start..].find("\n}\n").unwrap() + 3;
+    script[start..end].to_string()
+}
+
+/// Whether install.sh would hand a netplan folder like this one over
+fn would_hand_over(files: &[(&str, &str)]) -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "ystreamer-netplan-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    for (name, text) in files {
+        fs::write(dir.join(name), text).unwrap();
+    }
+    let script = include_str!("../../../packaging/install.sh");
+    let program = format!(
+        "NETPLAN_DIR={dir}\nNETPLAN_ARMBIAN=$NETPLAN_DIR/10-dhcp-all-interfaces.yaml\n{}{}needs_handover",
+        shell_function(script, "netplan_is_stock"),
+        shell_function(script, "needs_handover"),
+        dir = dir.display(),
+    );
+    let ok = std::process::Command::new("sh")
+        .args(["-c", &program])
+        .status()
+        .unwrap()
+        .success();
+    fs::remove_dir_all(&dir).unwrap();
+    ok
+}
+
+/// Only Armbian's own file, as it comes, is set aside: a static address or
+/// another netplan file means the user set the network up, and moving one
+/// file wouldn't hand the port over anyway
+#[test]
+fn install_script_hands_over_only_armbians_own_netplan() {
+    let stock = include_str!("../../../packaging/testdata/armbian-10-dhcp-all-interfaces.yaml");
+    const NAME: &str = "10-dhcp-all-interfaces.yaml";
+    assert!(would_hand_over(&[(NAME, stock)]));
+    assert!(!would_hand_over(&[]));
+    let fixed = stock.replacen(
+        "      dhcp4: yes\n",
+        "      dhcp4: no\n      addresses: [192.168.0.50/24]\n",
+        1,
+    );
+    assert!(!would_hand_over(&[(NAME, &fixed)]));
+    let no_dhcp = stock.replacen("dhcp4: yes", "dhcp4: false", 1);
+    assert!(!would_hand_over(&[(NAME, &no_dhcp)]));
+    let already = stock.replace("renderer: networkd", "renderer: NetworkManager");
+    assert!(!would_hand_over(&[(NAME, &already)]));
+    let other = "network:\n  version: 2\n  ethernets:\n    end1:\n      dhcp4: yes\n";
+    assert!(!would_hand_over(&[(NAME, stock), ("20-mine.yaml", other)]));
+}
+
+#[test]
+fn a_device_takes_the_package_for_its_architecture() {
     let manifest: Manifest = serde_json::from_str(
         r#"{"version": "0.2.0", "packages": {
-            "arm64": {"url": "https://example.com/trixie.deb", "signature": "c2ln"},
-            "arm64-bookworm": {"url": "https://example.com/bookworm.deb", "signature": "c2ln"}}}"#,
+            "arm64": {"url": "https://example.com/arm64.deb", "signature": "c2ln"}}}"#,
     )
     .unwrap();
-    let url = |codename: Option<&str>| {
-        pick_package(&manifest.packages, "arm64", codename).map(|p| p.url.as_str())
-    };
-    assert_eq!(url(Some("trixie")), Some("https://example.com/trixie.deb"));
     assert_eq!(
-        url(Some("bookworm")),
-        Some("https://example.com/bookworm.deb")
+        pick_package(&manifest.packages, "arm64").map(|p| p.url.as_str()),
+        Some("https://example.com/arm64.deb")
     );
-    // Not knowing the release, or one without a package of its own, means the main one
-    assert_eq!(url(None), Some("https://example.com/trixie.deb"));
-    assert_eq!(url(Some("forky")), Some("https://example.com/trixie.deb"));
-    assert!(pick_package(&manifest.packages, "amd64", Some("bookworm")).is_none());
+    assert!(pick_package(&manifest.packages, "amd64").is_none());
 }

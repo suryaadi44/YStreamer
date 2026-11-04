@@ -18,7 +18,8 @@ const POLL: Duration = Duration::from_millis(100);
 const SHOWN_FOR: Duration = Duration::from_secs(10 * 60);
 
 /// On a FAT partition of the card that any computer can write to: the Pi's
-/// boot partition, or the `config` one on Radxa's images
+/// boot partition, or the `config` one on Radxa's images. Armbian has no
+/// such partition; `ystreamer reset` does it there
 const FILES: [&str; 4] = [
     "/boot/firmware/ystreamer-reset",
     "/boot/firmware/ystreamer-reset.txt",

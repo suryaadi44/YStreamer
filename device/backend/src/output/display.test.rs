@@ -22,9 +22,10 @@ fn the_pi_keeps_its_first_plane() {
     assert_eq!(choose_video_plane(&planes), Some(30));
 }
 
-/// The RK3568 (ROCK 3A), as its 6.1 kernel lists the planes: RGB-only
+/// The RK3568 (ROCK 3A), as Radxa's 6.1 kernel lists the planes: RGB-only
 /// "Smart" windows, "Esmart0" typed as a cursor, "Cluster" windows without
-/// NV12, and "Esmart1" at 112
+/// NV12, and "Esmart1" at 112. Armbian's vendor kernel numbers them
+/// differently (the first NV12 one is 97); the order is the same
 #[test]
 fn the_rock_3a_gets_its_nv12_overlay() {
     let planes = [

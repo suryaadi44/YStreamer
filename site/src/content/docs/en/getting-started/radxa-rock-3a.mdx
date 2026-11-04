@@ -13,8 +13,7 @@ on the Pi, but far fewer people have run it there. The rest, the web
 interface, streams, recordings and camera settings, works the same.
 
 <Admonition type="info" title="What's different from the Pi">
-  - **No ready-made image.** Install on Radxa's Debian 12 image with the
-    install script.
+  - **No ready-made image.** Install on Armbian with the install script.
   - **The goggles go into the upper USB 3 port**, with the board's OTG switch
     on DEVICE, not into a USB-C port.
   - **The board is powered through its own USB-C port**, which the goggles
@@ -22,21 +21,20 @@ interface, streams, recordings and camera settings, works the same.
   - **No Wi-Fi hot-spot** unless the board has a Wi-Fi module. Ethernet works
     as it does on the Pi.
   - **No [record button](/docs/using/record-button) and no reset pin**: the
-    header's pins are numbered differently. Resetting by file still works:
-    an empty `ystreamer-reset` file on the card's `config` partition, the one
-    with `before.txt` on it.
+    header's pins are numbered differently. There's no reset file either,
+    since Armbian's card has no partition another computer can write to. Run
+    `sudo ystreamer reset` over SSH instead.
   - **No "throttled" readings** on the Performance page; those come from the
     Pi's firmware.
 </Admonition>
 
 ## What you need
 
-- A **Radxa ROCK 3A** running Radxa's **Debian 12 (bookworm)** image: the
-  latest release at [github.com/radxa-build/rock-3a](https://github.com/radxa-build/rock-3a/releases/latest),
-  `rock-3a_bookworm_kde_r2` at the time of writing, which is the one this was
-  developed against. It already carries the Rockchip video packages. The
-  older Debian 11 (`b25`) images don't, and Radxa no longer publishes them
-  for that release.
+- A **Radxa ROCK 3A** with Armbian's **Trixie, vendor kernel, minimal** image,
+  from [dl.armbian.com/rock-3a](https://dl.armbian.com/rock-3a/). It has to be
+  the **vendor** kernel: the "current" (mainline) images have no Rockchip
+  video decoder, so the video would be decoded in software. Armbian has no
+  Trixie desktop image with the vendor kernel, and YStreamer doesn't need one.
 - A **USB-C power supply** with Power Delivery, 9 V or more and 18 W or more,
   into the board's USB-C port. Unlike the Pi's, that port is for power only
   here.
@@ -48,21 +46,11 @@ interface, streams, recordings and camera settings, works the same.
 
 ## Set the board up
 
-1. Flash Radxa's image, boot the board and set it up (user, network, SSH) the
-   way Radxa's instructions say.
+1. Flash the Armbian image, boot the board and go through Armbian's first
+   login (root password, your user, time zone), with a screen and keyboard or
+   over SSH.
 2. Set the **OTG switch** beside the upper USB 3 port to **DEVICE**. In the
-   HOST position the goggles see nothing at all. Leave the port's overlay in
-   `rsetup` (Overlays) at its default, "controlled by hardware switch"; "Set
-   OTG port to Peripheral mode" works too, "Host mode" doesn't.
-3. Radxa's image starts a desktop, which keeps the HDMI output for itself.
-   Boot to the console instead:
-
-   ```sh
-   sudo systemctl set-default multi-user.target
-   sudo reboot
-   ```
-
-   `sudo systemctl set-default graphical.target` brings the desktop back.
+   HOST position the goggles see nothing at all.
 
 ## Install
 
@@ -75,38 +63,72 @@ curl -fsSL https://ystreamer.yarosfpv.com/install.sh | sudo sh
 
 On the ROCK 3A it also:
 
-- installs Radxa's video packages, `librockchip-mpp1` and
-  `gstreamer1.0-rockchip1`, which decode and encode in hardware;
-- switches off Radxa's own USB gadget services (`radxa-otgutils`: ADB and
-  USB networking over the OTG port), if any are enabled, since they would
-  take the port back every time the goggles connect;
-- installs the package built for Debian 12. Updates from the web interface
-  pick that package too.
+- adds Radxa's package repository and installs `librockchip-mpp1`, `librga2`
+  and `gstreamer1.0-rockchip1` from it, which decode and encode in hardware.
+  Armbian doesn't carry them. The repository is pinned to those three, so
+  nothing else of Radxa's, kernels least of all, ever installs from it;
+- hands the wired network from Armbian's own setup (netplan and
+  systemd-networkd) to NetworkManager, which YStreamer's network settings
+  work through. That takes effect at the next boot; the SSH session the
+  install runs in stays up.
 
-Then open `http://<hostname>.local`, with the name you gave the board,
-connect the goggles and switch them on. The **Logs** page shows "Link is
-live", and HDMI shows the stream.
+Then **reboot**:
+
+```sh
+sudo reboot
+```
+
+The board may come back on a different IP address, so open
+`http://<hostname>.local`, with the board's hostname, rather than the old
+address. Connect the goggles and switch them on. The **Logs** page shows
+"Link is live", and HDMI shows the stream.
+
+Updates from the web interface install the same package the Pi gets.
 
 ## If something's wrong
 
-- **"no USB device controller" in the logs**: the OTG switch is on HOST, or
-  an `rsetup` overlay forces host mode. Set the switch to DEVICE, put the
-  overlay back, and reboot.
+- **"no USB device controller" in the logs**: the OTG switch is on HOST. Set
+  it to DEVICE and reboot.
 - **The goggles don't connect**: try another OTG adapter; some leave out the
   resistor that tells the goggles they're facing a host. Power the board
   first, then the goggles, then the air unit.
-- **The stream works but HDMI shows nothing**: the desktop is still running
-  (see above), or the Rockchip packages didn't install:
-  `apt-cache policy gstreamer1.0-rockchip1` should show a version. The log
-  line "decoding with mppvideodec" means the hardware decoder was found;
-  "decoding with avdec_h264" means it wasn't, and the video is decoded in
-  software.
-- **Undoing it all**: `sudo apt remove ystreamer` prints how to switch Radxa's
-  USB gadget services back on, and
-  `sudo systemctl set-default graphical.target` brings the desktop back.
+- **"decoding with avdec_h264" in the logs**: the hardware decoder wasn't
+  found, and the video is decoded in software. `uname -r` should end in
+  `-vendor-rk35xx`; if it doesn't, flash the vendor image. Then
+  `apt-cache policy gstreamer1.0-rockchip1` should show a version; if it
+  doesn't, run the install script again. "decoding with mppvideodec" means
+  the hardware decoder is in use.
+- **`gst-inspect-1.0 mpph264enc` finds nothing**: run it with `sudo`. The
+  video hardware is only open to root, and YStreamer runs as root.
+- **Can't find the board after the reboot**: it got a new address from your
+  router. `<hostname>.local` finds it, as does the router's list of devices.
+- **"The wired network is set up by hand" during the install**: you changed
+  Armbian's netplan setup, a static address for instance, or added a netplan
+  file of your own. The install leaves it as it is, with systemd-networkd, so
+  the board stays where you put it; YStreamer works over it, but its Ethernet
+  settings don't apply.
+
+## Undoing it all
+
+```sh
+sudo apt remove ystreamer
+sudo rm /etc/apt/sources.list.d/ystreamer-radxa.sources \
+  /etc/apt/preferences.d/ystreamer-radxa /etc/apt/keyrings/ystreamer-radxa.asc
+```
+
+To give the wired network back to Armbian's own setup, from the next boot:
+
+```sh
+sudo mv /etc/netplan/10-dhcp-all-interfaces.yaml.ystreamer-off \
+  /etc/netplan/10-dhcp-all-interfaces.yaml
+sudo systemctl enable systemd-networkd
+sudo systemctl disable NetworkManager
+sudo reboot
+```
 
 <Admonition type="tip" title="Tried it? Let us know">
   Reports are what turn "experimental" into "supported". Use the [hardware
-  compatibility report](https://github.com/YLabs-FPV/YStreamer/issues/new?template=hardware_report.yml)
+  compatibility
+  report](https://github.com/YLabs-FPV/YStreamer/issues/new?template=hardware_report.yml)
   on GitHub, with your goggles and air unit.
 </Admonition>

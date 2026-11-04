@@ -36,8 +36,8 @@ pub(crate) struct PlaneFacts {
 /// drive the controller. On the Pi that is the primary plane, which takes
 /// NV12 too, so this picks the same one. On the RK3568 the first ones are
 /// RGB-only "Smart" windows and one typed as a cursor, on which kmssink
-/// can't negotiate the decoder's output; the first that takes NV12 is 112
-/// there
+/// can't negotiate the decoder's output; the first that takes NV12 is 97
+/// on Armbian's vendor kernel (112 on Radxa's)
 pub(crate) fn choose_video_plane(planes: &[PlaneFacts]) -> Option<u32> {
     planes
         .iter()

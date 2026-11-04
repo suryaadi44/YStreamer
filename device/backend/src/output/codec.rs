@@ -101,9 +101,9 @@ fn available(element: &str) -> bool {
     gst::ElementFactory::find(element).is_some()
 }
 
-/// The board's own first. Radxa's images carry libv4l-rkmpp, a V4L2 face on
-/// MPP, so the Pi's element names can turn up there too; the MPP elements
-/// are the ones the bring-up ran
+/// The board's own first. A Rockchip board can have libv4l-rkmpp, a V4L2
+/// face on MPP, so the Pi's element names can turn up there too; the MPP
+/// elements are the ones the bring-up ran
 fn choose_decoder(board: Board, has: impl Fn(&str) -> bool) -> Decoder {
     let order = match board {
         Board::Rockchip => [Decoder::Mpp, Decoder::V4l2],
