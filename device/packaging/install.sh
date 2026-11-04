@@ -23,6 +23,14 @@ RADXA_SOURCE=/etc/apt/sources.list.d/ystreamer-radxa.sources
 RADXA_PIN=/etc/apt/preferences.d/ystreamer-radxa
 # 1 when this script adds Radxa's repository itself; check_device decides
 RADXA_REPO=
+# Armbian's own netplan file, which gives the wired ports to systemd-networkd.
+# YStreamer's network settings work through NetworkManager
+NETPLAN_ARMBIAN=/etc/netplan/10-dhcp-all-interfaces.yaml
+# Keeps NetworkManager off the wired ports until the next boot; /run is
+# emptied at every boot
+HANDOVER_CONF=/run/NetworkManager/conf.d/90-ystreamer-handover.conf
+# 1 once hand_over_network has set the switch up for the next boot
+HANDED_OVER=
 # pi, rockchip, or empty for anything else; check_device sets it
 BOARD=
 
@@ -171,6 +179,30 @@ Pin-Priority: 500
 EOF
 }
 
+needs_handover() {
+    [ -f "$NETPLAN_ARMBIAN" ]
+}
+
+# From the next boot NetworkManager runs the wired port, as on Raspberry Pi
+# OS: Armbian's netplan file is set aside and networkd switched off, and
+# NetworkManager makes its "Wired connection 1". Nothing changes before the
+# reboot: NetworkManager, which the package pulls in, is kept off the wired
+# ports until then, so the SSH session running this stays up
+hand_over_network() {
+    # Also after a run that stopped before NetworkManager was installed
+    if needs_handover || { [ -f "$NETPLAN_ARMBIAN.ystreamer-off" ] && ! command -v nmcli >/dev/null 2>&1; }; then
+        mkdir -p "${HANDOVER_CONF%/*}"
+        cat >"$HANDOVER_CONF" <<'EOF'
+[keyfile]
+unmanaged-devices=type:ethernet
+EOF
+    fi
+    needs_handover || return 0
+    mv "$NETPLAN_ARMBIAN" "$NETPLAN_ARMBIAN.ystreamer-off"
+    systemctl disable systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service >/dev/null 2>&1 || true
+    HANDED_OVER=1
+}
+
 check_device() {
     arch=$(dpkg --print-architecture 2>/dev/null) || die "This isn't a Debian-based system."
     [ "$arch" = arm64 ] ||
@@ -211,6 +243,9 @@ check_device() {
             say "The Rockchip video packages will come from the Radxa repository already set up here."
         else
             RADXA_REPO=1
+        fi
+        if needs_handover; then
+            say "The wired network is run by systemd-networkd (netplan, $NETPLAN_ARMBIAN); the install hands it to NetworkManager, from the next boot."
         fi
         # Host or device is a switch on the board, not a boot setting
         [ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] ||
@@ -294,6 +329,10 @@ approve() {
         say "  - go back to $version"
         ;;
     esac
+    if [ "$BOARD" = rockchip ] && needs_handover; then
+        say "  - hand the wired network to NetworkManager from the next boot: $NETPLAN_ARMBIAN"
+        say "    is set aside, and the board may get a new IP address from DHCP; use $(hostname).local"
+    fi
     if [ "$change" != install ]; then
         say "  - restart YStreamer, which finishes an open recording and pauses the"
         say "    streams and the HDMI output for a few seconds"
@@ -406,6 +445,9 @@ if [ "$BOARD" = rockchip ]; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y $ROCKCHIP_PACKAGES ||
         warn "Couldn't install $ROCKCHIP_PACKAGES; without them the video is decoded in software."
 fi
+if [ "$BOARD" = rockchip ]; then
+    hand_over_network
+fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "$DEB"
 
 # The updater goes back to current.deb if a later version doesn't start, and
@@ -441,4 +483,8 @@ say
 say "YStreamer $version is running: $address"
 if [ "$before" != "$(cksum 2>/dev/null <"$BOOT_CONFIG" || true)" ]; then
     say "Reboot before connecting the goggles: the USB-C port was just set up for them."
+fi
+if [ -n "$HANDED_OVER" ]; then
+    say "Reboot to finish: the wired network moves to NetworkManager, and the board may"
+    say "come back on a new IP address ($(hostname).local stays the same)."
 fi

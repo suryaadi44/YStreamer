@@ -209,6 +209,32 @@ fn install_script_takes_only_the_video_packages_from_radxa() {
     );
 }
 
+/// Armbian's wired port moves from systemd-networkd to NetworkManager at the
+/// next boot. Until then NetworkManager, which the package pulls in, must
+/// keep off it, or the SSH session running the install could drop
+#[test]
+fn install_script_hands_the_wired_port_over_at_the_next_boot() {
+    let script = include_str!("../../../packaging/install.sh");
+    assert!(script.contains("NETPLAN_ARMBIAN=/etc/netplan/10-dhcp-all-interfaces.yaml\n"));
+    assert!(
+        script.contains("HANDOVER_CONF=/run/NetworkManager/conf.d/90-ystreamer-handover.conf\n")
+    );
+    assert!(script.contains("[keyfile]\nunmanaged-devices=type:ethernet\n"));
+    assert!(script.contains(
+        "systemctl disable systemd-networkd.service systemd-networkd.socket \
+         systemd-networkd-wait-online.service"
+    ));
+    // Nothing takes effect before the reboot, and the reboot is the user's
+    assert!(!script.contains("netplan apply"));
+    assert!(!script.contains("disable --now systemd-networkd"));
+    assert!(!script.lines().any(|l| l.trim_start().starts_with("reboot")));
+    let handover = script.find("\n    hand_over_network\n").expect("called");
+    let package = script
+        .find("apt-get install -y --allow-downgrades \"$DEB\"")
+        .unwrap();
+    assert!(handover < package);
+}
+
 #[test]
 fn a_device_takes_the_package_for_its_architecture() {
     let manifest: Manifest = serde_json::from_str(
