@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs YStreamer on a Raspberry Pi that already runs Raspberry Pi OS, or
-# on a Radxa ROCK 3A running Radxa's Debian 12 image:
+# on a Radxa ROCK 3A running Armbian trixie (vendor kernel):
 #
 #   curl -fsSL https://ystreamer.yarosfpv.com/install.sh | sudo sh
 #
@@ -14,9 +14,15 @@ MANIFEST_URL=${YSTREAMER_UPDATE_URL:-https://ystreamer.yarosfpv.com/update/manif
 PUBLIC_KEY="PGdZ5XTTQ6j+TeKZfSTFty0xEbNqowNBXr4A9zPQvlo="
 UPDATES=/var/lib/ystreamer/update
 BOOT_CONFIG=/boot/firmware/config.txt
-# The ROCK 3A's video decoder and encoder, from Radxa's repository. The Pi's
-# are in its kernel
-ROCKCHIP_PACKAGES="librockchip-mpp1 gstreamer1.0-rockchip1"
+# The ROCK 3A's video decoder and encoder: Rockchip MPP and its GStreamer
+# plugin, which Armbian doesn't carry, from Radxa's repository. The Pi's are
+# in its kernel
+ROCKCHIP_PACKAGES="librockchip-mpp1 librga2 gstreamer1.0-rockchip1"
+RADXA_KEY=/etc/apt/keyrings/ystreamer-radxa.asc
+RADXA_SOURCE=/etc/apt/sources.list.d/ystreamer-radxa.sources
+RADXA_PIN=/etc/apt/preferences.d/ystreamer-radxa
+# 1 when this script adds Radxa's repository itself; check_device decides
+RADXA_REPO=
 # pi, rockchip, or empty for anything else; check_device sets it
 BOARD=
 
@@ -75,6 +81,96 @@ desktop_warning() {
     fi
 }
 
+# apt sources for Radxa's repository other than the one this script writes
+radxa_sources() {
+    grep -lsF radxa-repo.github.io /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null |
+        grep -vxF "$RADXA_SOURCE" || true
+}
+
+# Radxa's rk3568-bookworm suite, which has MPP built for this chip; its
+# packages install on trixie. The pin keeps everything else of Radxa's out,
+# kernels and system packages above all. Writing the files again changes
+# nothing
+add_radxa_repo() {
+    install -d -m 755 /etc/apt/keyrings
+    # Radxa's signing keys, 2025 (which signs the repository now) and 2026:
+    #   4AEC 3372 35A9 7EDD 397E  3DCD 67A4 74DD 4040 2951
+    #   B70F 2845 D972 A6BE 9F30  836E 0862 F29C 32EF 42C7
+    # When Radxa signs with a newer one, a YStreamer release replaces these
+    cat >"$RADXA_KEY" <<'KEY'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+UItCG2dt63whSGLxhfMFsgVpepAQ1W3ZEQ==
+=S9f0
+-----END PGP PUBLIC KEY BLOCK-----
+KEY
+    chmod 644 "$RADXA_KEY"
+    cat >"$RADXA_SOURCE" <<EOF
+Types: deb
+URIs: https://radxa-repo.github.io/rk3568-bookworm
+Suites: rk3568-bookworm
+Components: main
+Signed-By: $RADXA_KEY
+EOF
+    cat >"$RADXA_PIN" <<EOF
+Package: *
+Pin: origin radxa-repo.github.io
+Pin-Priority: -1
+
+Package: $ROCKCHIP_PACKAGES
+Pin: origin radxa-repo.github.io
+Pin-Priority: 500
+EOF
+}
+
 check_device() {
     arch=$(dpkg --print-architecture 2>/dev/null) || die "This isn't a Debian-based system."
     [ "$arch" = arm64 ] ||
@@ -94,16 +190,31 @@ check_device() {
 
     codename=$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")
     case $BOARD:$codename in
-    pi:trixie | rockchip:bookworm) ;;
+    pi:trixie | rockchip:trixie) ;;
     pi:*) confirm "YStreamer is only tested on Raspberry Pi OS 13 (trixie); this is ${codename:-an unknown release}." ;;
-    rockchip:*) confirm "On the ROCK 3A, YStreamer is only tested on Radxa's Debian 12 (bookworm) image; this is ${codename:-an unknown release}." ;;
-    *) confirm "YStreamer is only tested on Debian 13 (trixie) and 12 (bookworm); this is ${codename:-an unknown release}." ;;
+    # The package is built for Debian 13 and doesn't install on an older one
+    rockchip:*) die "On the ROCK 3A, YStreamer needs Armbian trixie (Debian 13) with the vendor kernel; this is ${codename:-an unknown release}." ;;
+    *) confirm "YStreamer is only tested on Debian 13 (trixie); this is ${codename:-an unknown release}." ;;
     esac
 
     if [ "$BOARD" = rockchip ]; then
+        [ -f /etc/armbian-release ] ||
+            confirm "On the ROCK 3A, YStreamer is only tested on Armbian trixie with the vendor kernel; this doesn't look like Armbian."
+        # Armbian's mainline kernels have no MPP
+        if [ ! -e /dev/mpp_service ]; then
+            no_mpp="This kernel has no Rockchip video decoder (/dev/mpp_service), so video would be decoded in software. Armbian's \"vendor\" image for the ROCK 3A has it."
+            if [ -n "$CHECK_ONLY" ]; then warn "$no_mpp"; else confirm "$no_mpp"; fi
+        fi
+        # Radxa's own images already have its repository; a pin of ours would
+        # hold back every other package of theirs
+        if [ -n "$(radxa_sources)" ]; then
+            say "The Rockchip video packages will come from the Radxa repository already set up here."
+        else
+            RADXA_REPO=1
+        fi
         # Host or device is a switch on the board, not a boot setting
         [ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] ||
-            warn "No USB device controller: set the board's OTG switch to DEVICE (and don't force host mode with an rsetup overlay), then reboot, or the goggles can't connect."
+            warn "No USB device controller: set the board's OTG switch to DEVICE, then reboot, or the goggles can't connect."
     elif [ ! -f "$BOOT_CONFIG" ]; then
         warn "$BOOT_CONFIG is missing, so the USB-C port can't be set up for the goggles."
     fi
@@ -121,14 +232,13 @@ check_device() {
     fi
 }
 
-# Prints: version, package URL, signature. A package built for this Debian
-# release (arm64-bookworm, the ROCK 3A's) comes before the plain arm64 one
+# Prints: version, package URL, signature
 read_manifest() {
-    python3 - "$1" "$2" "$3" <<'PY'
+    python3 - "$1" "$2" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1]))
-arch, codename = sys.argv[2], sys.argv[3]
-package = manifest["packages"].get(f"{arch}-{codename}") or manifest["packages"].get(arch)
+arch = sys.argv[2]
+package = manifest["packages"].get(arch)
 if not package:
     sys.exit(f"Version {manifest['version']} has no package for {arch} devices")
 print(manifest["version"], package["url"], package["signature"])
@@ -164,8 +274,9 @@ approve() {
         say "YStreamer $version is ready to install. This will:"
         say "  - install the package and what it needs, such as GStreamer"
         if [ "$BOARD" = rockchip ]; then
+            [ -z "$RADXA_REPO" ] ||
+                say "  - add Radxa's package repository, limited to the video packages: $ROCKCHIP_PACKAGES"
             say "  - install the Rockchip video packages: $ROCKCHIP_PACKAGES"
-            say "  - switch off Radxa's own USB gadget service (ADB over USB), if it's there"
         fi
         say "  - start YStreamer now and at every boot, using port 80 and the HDMI output"
         ;;
@@ -230,7 +341,7 @@ trap 'rm -rf "$WORK"' EXIT
 say "Looking up the latest version..."
 curl -fsSL "$MANIFEST_URL" -o "$WORK/manifest.json" ||
     die "Couldn't reach the update server at $MANIFEST_URL."
-release=$(read_manifest "$WORK/manifest.json" "$arch" "$codename") || die "The update server sent something unexpected."
+release=$(read_manifest "$WORK/manifest.json" "$arch") || die "The update server sent something unexpected."
 set -- $release
 version=$1
 url=$2
@@ -282,7 +393,14 @@ before=$(cksum 2>/dev/null <"$BOOT_CONFIG" || true)
 chmod 755 "$WORK"
 chmod 644 "$DEB"
 say "Installing..."
-apt-get update -q
+if [ "$BOARD" = rockchip ]; then
+    [ -z "$RADXA_REPO" ] || add_radxa_repo
+    # Radxa's repository out of reach shouldn't stop the install
+    apt-get update -q ||
+        warn "Couldn't update every package list; the Rockchip video packages may not install."
+else
+    apt-get update -q
+fi
 if [ "$BOARD" = rockchip ]; then
     # shellcheck disable=SC2086
     DEBIAN_FRONTEND=noninteractive apt-get install -y $ROCKCHIP_PACKAGES ||

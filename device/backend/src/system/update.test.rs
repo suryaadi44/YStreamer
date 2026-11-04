@@ -183,6 +183,32 @@ fn install_script_checks_against_the_same_key() {
     assert!(script.contains(&format!("PUBLIC_KEY=\"{}\"", PUBLIC_KEY.trim())));
 }
 
+/// On the ROCK 3A, install.sh adds Radxa's repository for the video
+/// packages; nothing else may come from it, or Radxa's kernel and system
+/// packages could replace Armbian's
+#[test]
+fn install_script_takes_only_the_video_packages_from_radxa() {
+    let script = include_str!("../../../packaging/install.sh");
+    let packages = "librockchip-mpp1 librga2 gstreamer1.0-rockchip1";
+    assert!(script.contains(&format!("ROCKCHIP_PACKAGES=\"{packages}\"")));
+    assert!(script.contains(
+        "Package: *\nPin: origin radxa-repo.github.io\nPin-Priority: -1\n\n\
+         Package: $ROCKCHIP_PACKAGES\nPin: origin radxa-repo.github.io\nPin-Priority: 500\n"
+    ));
+    assert!(script.contains("RADXA_KEY=/etc/apt/keyrings/ystreamer-radxa.asc\n"));
+    assert!(script.contains("Signed-By: $RADXA_KEY\n"));
+    assert_eq!(
+        script
+            .matches("-----BEGIN PGP PUBLIC KEY BLOCK-----")
+            .count(),
+        1
+    );
+    assert_eq!(
+        script.matches("-----END PGP PUBLIC KEY BLOCK-----").count(),
+        1
+    );
+}
+
 #[test]
 fn a_device_takes_the_package_for_its_architecture() {
     let manifest: Manifest = serde_json::from_str(
