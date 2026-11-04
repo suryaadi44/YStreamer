@@ -13,16 +13,19 @@ on the Pi, but far fewer people have run it there. The rest, the web
 interface, streams, recordings and camera settings, works the same.
 
 <Admonition type="info" title="What's different from the Pi">
-  - **No ready-made image.** Install on Armbian with the install script. - **The
-  goggles go into the upper USB 3 port**, with the board's OTG switch on DEVICE,
-  not into a USB-C port. - **The board is powered through its own USB-C port**,
-  which the goggles don't need. - **No Wi-Fi hot-spot** unless the board has a
-  Wi-Fi module. Ethernet works as it does on the Pi. - **No [record
-  button](/docs/using/record-button) and no reset pin**: the header's pins are
-  numbered differently. There's no reset file either, since Armbian's card has
-  no partition another computer can write to. Run `sudo ystreamer reset` over
-  SSH instead. - **No "throttled" readings** on the Performance page; those come
-  from the Pi's firmware.
+  - **No ready-made image.** Install on Armbian with the install script.
+  - **The goggles go into the upper USB 3 port**, with the board's OTG switch
+    on DEVICE, not into a USB-C port.
+  - **The board is powered through its own USB-C port**, which the goggles
+    don't need.
+  - **No Wi-Fi hot-spot** unless the board has a Wi-Fi module. Ethernet works
+    as it does on the Pi.
+  - **No [record button](/docs/using/record-button) and no reset pin**: the
+    header's pins are numbered differently. There's no reset file either,
+    since Armbian's card has no partition another computer can write to. Run
+    `sudo ystreamer reset` over SSH instead.
+  - **No "throttled" readings** on the Performance page; those come from the
+    Pi's firmware.
 </Admonition>
 
 ## What you need
