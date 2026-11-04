@@ -184,23 +184,15 @@ fn install_script_checks_against_the_same_key() {
 }
 
 #[test]
-fn a_device_on_another_debian_release_takes_its_own_package() {
+fn a_device_takes_the_package_for_its_architecture() {
     let manifest: Manifest = serde_json::from_str(
         r#"{"version": "0.2.0", "packages": {
-            "arm64": {"url": "https://example.com/trixie.deb", "signature": "c2ln"},
-            "arm64-bookworm": {"url": "https://example.com/bookworm.deb", "signature": "c2ln"}}}"#,
+            "arm64": {"url": "https://example.com/arm64.deb", "signature": "c2ln"}}}"#,
     )
     .unwrap();
-    let url = |codename: Option<&str>| {
-        pick_package(&manifest.packages, "arm64", codename).map(|p| p.url.as_str())
-    };
-    assert_eq!(url(Some("trixie")), Some("https://example.com/trixie.deb"));
     assert_eq!(
-        url(Some("bookworm")),
-        Some("https://example.com/bookworm.deb")
+        pick_package(&manifest.packages, "arm64").map(|p| p.url.as_str()),
+        Some("https://example.com/arm64.deb")
     );
-    // Not knowing the release, or one without a package of its own, means the main one
-    assert_eq!(url(None), Some("https://example.com/trixie.deb"));
-    assert_eq!(url(Some("forky")), Some("https://example.com/trixie.deb"));
-    assert!(pick_package(&manifest.packages, "amd64", Some("bookworm")).is_none());
+    assert!(pick_package(&manifest.packages, "amd64").is_none());
 }
