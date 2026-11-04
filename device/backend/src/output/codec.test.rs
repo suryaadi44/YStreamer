@@ -15,7 +15,7 @@ fn the_pi_keeps_its_v4l2_codecs() {
     assert!(Decoder::V4l2.needs_level_patch());
 }
 
-/// Radxa's bookworm image: gstreamer1.0-rockchip1, no V4L2 codecs
+/// Armbian with Radxa's gstreamer1.0-rockchip1: no V4L2 codecs
 #[test]
 fn a_rockchip_board_uses_mpp() {
     let rock = only(&["mppvideodec", "mpph264enc", "avdec_h264", "x264enc"]);
@@ -24,7 +24,7 @@ fn a_rockchip_board_uses_mpp() {
     assert!(!Decoder::Mpp.needs_level_patch());
 }
 
-/// The same image with libv4l-rkmpp showing up as V4L2 codecs: still MPP,
+/// The same board with libv4l-rkmpp showing up as V4L2 codecs: still MPP,
 /// which is what was run on the board
 #[test]
 fn a_rockchip_board_prefers_mpp_over_a_v4l2_face_on_it() {
